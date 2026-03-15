@@ -5,35 +5,39 @@ TITLE Temperature File Reversal Program         (Proj6_bairsamu.asm)
 ; OSU email address: bairsamu@oregonstate.edu
 ; Course number/section:   CS271 Section 400
 ; Project Number: 6                Due Date: 03/15/2026
-; Description: Reads a comma-delimited file of temperature values (ASCII integers),
-;              parses each line into an array of SDWORDs, then prints each line
-;              back out in reverse order. Uses LODSB/STOSB for string handling.
-;              Parameters are passed on the stack (STDCALL).
+; Description: Reads a comma-delimited file of ASCII temperature integers,
+;              parses each line into an SDWORD array, and prints each line
+;              reversed. Uses LODSB/STOSB for string handling. All params
+;              passed on the stack via STDCALL.
 ;
-; **EC1: Program handles multi-line files -- each line gets reversed and printed
-;        separately with a "Corrected Input Line N:" label.
-; **EC2: Wrote a WriteVal procedure that converts an integer to a string using
-;        STOSB and prints it with mDisplayString instead of using WriteInt.
+; **EC1: Handles multi-line files -- each line reversed and printed separately,
+;        labeled "Corrected Input Line N:".
+; **EC2: WriteVal procedure converts integers to ASCII strings with STOSB and
+;        displays them via mDisplayString instead of WriteInt/WriteDec.
 
 INCLUDE Irvine32.inc
 
 ; -----------------------------------------------------------------------
 ; constants
 ; -----------------------------------------------------------------------
-TEMPS_PER_DAY   =   24
-DELIMITER       =   ','
+TEMPS_PER_DAY   =   24          ; temps per line, tested 1-48
+DELIMITER       =   ','         ; separates values in the file
 CR              =   13
 LF              =   10
-MAX_BUF         =   8192
+MAX_BUF         =   8192        ; file buffer size
 MAX_FNAME       =   256
-VALBUF          =   22          ; big enough for -2147483648 plus null
+VALBUF          =   22          ; fits "-2147483648" + null terminator
 
 ; -----------------------------------------------------------------------
 ; macros
 ; -----------------------------------------------------------------------
 
-; mGetString: show prompt, read input into buffer
-; params: prompt addr, buffer addr, buffer size, addr to store byte count
+; ---------------------------------------------------------
+; mGetString
+; Displays a prompt then reads keyboard input into a buffer.
+; Receives: prompt (input, ref), buf (output, ref),
+;           bufSize (input, val), numBytes (output, ref)
+; ---------------------------------------------------------
 mGetString  MACRO   prompt, buf, bufSize, numBytes
     PUSH    EAX
     PUSH    ECX
@@ -41,7 +45,7 @@ mGetString  MACRO   prompt, buf, bufSize, numBytes
     mDisplayString  prompt
     MOV     EDX, buf
     MOV     ECX, bufSize
-    CALL    ReadString
+    CALL    ReadString          ; EAX = bytes read
     MOV     EDX, numBytes
     MOV     [EDX], EAX
     POP     EDX
@@ -49,7 +53,11 @@ mGetString  MACRO   prompt, buf, bufSize, numBytes
     POP     EAX
 ENDM
 
-; mDisplayString: print a string given its address
+; ---------------------------------------------------------
+; mDisplayString
+; Prints null-terminated string at given address.
+; Receives: strAddr (input, ref)
+; ---------------------------------------------------------
 mDisplayString  MACRO   strAddr
     PUSH    EDX
     MOV     EDX, strAddr
@@ -57,7 +65,11 @@ mDisplayString  MACRO   strAddr
     POP     EDX
 ENDM
 
-; mDisplayChar: print a single character (immediate or constant)
+; ---------------------------------------------------------
+; mDisplayChar
+; Prints a single ASCII character (immediate or constant).
+; Receives: ch (input, immediate/constant)
+; ---------------------------------------------------------
 mDisplayChar    MACRO   ch
     PUSH    EAX
     MOV     AL, ch
@@ -75,20 +87,20 @@ intro       BYTE    "Welcome to the intern error-corrector! I'll read a "
             BYTE    "and provide the corrected temperature", CR, LF
             BYTE    "ordering as a printout!", 0
 
-ec1str      BYTE    "**EC: This program reads multi-line files and reverses each line "
-            BYTE    "independently.", 0
+ec1str      BYTE    "**EC: This program reads multi-line input files and reverses "
+            BYTE    "each line independently.", 0
 
 ec2str      BYTE    "**EC: This program implements a WriteVal procedure to convert "
             BYTE    "integers to strings and display them, rather than using "
             BYTE    "WriteDec/WriteInt.", 0
 
 prompt1     BYTE    "Enter the name of the file to be read: ", 0
-hdr         BYTE    "Here's the corrected temperature order!", 0
+hdrMsg      BYTE    "Here's the corrected temperature order!", 0
 lineHdr     BYTE    "Corrected Input Line ", 0
-errMsg      BYTE    "Error opening file. Exiting.", 0
-bye         BYTE    CR, LF, "Hope that helps resolve the issue, goodbye!", 0
+errMsg      BYTE    "Error: could not open file.", 0
+goodbyeMsg  BYTE    CR, LF, "Hope that helps resolve the issue, goodbye!", 0
 
-; buffers
+; runtime buffers
 fname       BYTE    MAX_FNAME   DUP(0)
 fnLen       DWORD   0
 fileBuf     BYTE    MAX_BUF     DUP(0)
@@ -101,15 +113,15 @@ temps       SDWORD  TEMPS_PER_DAY DUP(0)
 
 ; -----------------------------------------------------------------------
 ; ParseTempsFromString
-; reads TEMPS_PER_DAY integers out of one line of the file buffer,
-; stores them in the temps array as SDWORDs.
-; uses LODSB to walk through the string.
+; Description: Parses TEMPS_PER_DAY signed integers from one line of the
+;              file buffer and stores them in the temps array. Uses LODSB
+;              to walk through the string character by character.
 ;
-; params (stdcall):
-;   [EBP+12]  ptr to start of current line in fileBuf  (input, ref)
-;   [EBP+8]   ptr to temps array                       (output, ref)
-;
-; returns EAX = pointer to start of next line
+; Receives: [EBP+12] address of current line in fileBuf (input, ref)
+;           [EBP+8]  address of temps array (output, ref)
+; Returns:  EAX = pointer to start of next line in buffer
+; Preconditions: line is CR/LF or null terminated
+; Registers changed: EAX (return val); EBX ECX EDX ESI EDI saved/restored
 ; -----------------------------------------------------------------------
 ParseTempsFromString    PROC
 
@@ -121,39 +133,39 @@ ParseTempsFromString    PROC
     PUSH    ESI
     PUSH    EDI
 
-    MOV     ESI, [EBP+12]       ; source -- current line
-    MOV     EDI, [EBP+8]        ; destination -- temps array
+    MOV     ESI, [EBP+12]       ; start of current line
+    MOV     EDI, [EBP+8]        ; temps array
     MOV     ECX, TEMPS_PER_DAY
 
 nextTemp:
-    ; check sign
+    ; figure out sign first
     MOV     EDX, 1
     LODSB
     CMP     AL, '-'
     JNE     chkPlus
     MOV     EDX, -1
-    LODSB
-    JMP     doDigits
+    LODSB                       ; move past the minus sign
+    JMP     accumulate
 
 chkPlus:
     CMP     AL, '+'
-    JNE     doDigits
-    LODSB                       ; skip the plus, grab first digit
+    JNE     accumulate          ; no sign char, AL is already first digit
+    LODSB
 
-doDigits:
-    MOV     EBX, 0              ; accumulator
+accumulate:
+    MOV     EBX, 0
 
 digitLoop:
     CMP     AL, DELIMITER
-    JE      saveit
+    JE      storeVal
     CMP     AL, CR
-    JE      endOfLine
+    JE      lineEnd
     CMP     AL, LF
-    JE      endOfLine
+    JE      lineEnd
     CMP     AL, 0
-    JE      hitNull
+    JE      nullEnd
 
-    ; it's a digit
+    ; convert digit and fold into accumulator
     SUB     AL, '0'
     MOVZX   EAX, AL
     IMUL    EBX, EBX, 10
@@ -161,34 +173,34 @@ digitLoop:
     LODSB
     JMP     digitLoop
 
-saveit:
-    ; hit delimiter -- store and keep going
+storeVal:
+    ; hit the delimiter -- store and loop
     IMUL    EBX, EDX
     MOV     [EDI], EBX
     ADD     EDI, 4
     LOOP    nextTemp
-    JMP     alldone
+    JMP     parseEnd
 
-endOfLine:
-    ; hit CR -- store last value, eat the LF
+lineEnd:
+    ; end of line -- store last value and consume the LF
     IMUL    EBX, EDX
     MOV     [EDI], EBX
     CMP     AL, CR
-    JNE     alldone
-    LODSB                       ; eat LF
+    JNE     parseEnd            ; was just a LF, ESI already past it
+    LODSB                       ; eat the LF after CR
     CMP     AL, LF
-    JE      alldone
-    DEC     ESI                 ; wasn't LF, back up
-    JMP     alldone
+    JE      parseEnd
+    DEC     ESI                 ; not a LF, back up
+    JMP     parseEnd
 
-hitNull:
-    ; end of file mid-line
+nullEnd:
+    ; hit end of file
     IMUL    EBX, EDX
     MOV     [EDI], EBX
-    DEC     ESI
+    DEC     ESI                 ; keep ESI on the null so caller stops
 
-alldone:
-    MOV     EAX, ESI            ; return updated pointer
+parseEnd:
+    MOV     EAX, ESI
 
     POP     EDI
     POP     ESI
@@ -203,16 +215,20 @@ ParseTempsFromString    ENDP
 
 ; -----------------------------------------------------------------------
 ; WriteVal  (EC2)
-; takes a signed integer by value, converts it to an ASCII string using
-; STOSB, then displays it with mDisplayString. positive values get a +.
+; Description: Converts a signed integer to an ASCII string and prints it
+;              using mDisplayString. Uses STOSB to build the string in a
+;              local buffer. Positive values get a '+' prefix.
 ;
-; param: [EBP+8]  SDWORD value (input, by value)
+; Receives: [EBP+8] SDWORD value to print (input, by value)
+; Returns:  nothing
+; Preconditions: none
+; Registers changed: none (EAX EBX ECX EDX EDI saved/restored)
 ; -----------------------------------------------------------------------
 WriteVal    PROC
 
     PUSH    EBP
     MOV     EBP, ESP
-    SUB     ESP, VALBUF         ; local buffer for the string
+    SUB     ESP, VALBUF         ; local string buffer
 
     PUSH    EAX
     PUSH    EBX
@@ -223,41 +239,41 @@ WriteVal    PROC
     LEA     EDI, [EBP - VALBUF]
 
     MOV     EAX, [EBP+8]
-    MOV     ECX, 0              ; digit count
+    MOV     ECX, 0
 
-    ; write sign
+    ; write sign character
     CMP     EAX, 0
-    JGE     isPos
+    JGE     positiveVal
     MOV     BYTE PTR [EDI], '-'
     INC     EDI
     NEG     EAX
-    JMP     getDigits
-isPos:
+    JMP     pushDigits
+positiveVal:
     MOV     BYTE PTR [EDI], '+'
     INC     EDI
 
-getDigits:
-    ; push digits onto stack then pop in order
-wvDivLoop:
+pushDigits:
+    ; push digits onto stack so we can pop them in the right order
+divLoop:
     MOV     EDX, 0
     MOV     EBX, 10
-    DIV     EBX                 ; EAX = quotient, EDX = remainder
+    DIV     EBX                 ; remainder in EDX is next digit
     PUSH    EDX
     INC     ECX
     CMP     EAX, 0
-    JNZ     wvDivLoop
+    JNZ     divLoop
 
-wvPopLoop:
+popDigits:
     POP     EDX
     ADD     DL, '0'
     MOV     AL, DL
     STOSB
     DEC     ECX
-    JNZ     wvPopLoop
+    JNZ     popDigits
 
-    MOV     AL, 0               ; null terminate
+    ; null terminate and display
+    MOV     AL, 0
     STOSB
-
     LEA     EDX, [EBP - VALBUF]
     mDisplayString  EDX
 
@@ -275,11 +291,15 @@ WriteVal    ENDP
 
 ; -----------------------------------------------------------------------
 ; WriteTempsReverse
-; prints temps array in reverse order, delimiter after each value.
-; walks array backwards with register indirect (SUB ESI, 4).
-; calls WriteVal for each integer (EC2), mDisplayChar for delimiter.
+; Description: Prints the temps array in reverse order with DELIMITER
+;              between values. Uses register indirect (SUB ESI, 4) to
+;              walk backwards. Calls WriteVal for each integer (EC2) and
+;              mDisplayChar for the delimiter.
 ;
-; param: [EBP+8]  address of temps array (input, ref)
+; Receives: [EBP+8] address of temps array (input, ref)
+; Returns:  nothing
+; Preconditions: temps array has TEMPS_PER_DAY valid SDWORDs
+; Registers changed: none (EAX ECX ESI saved/restored)
 ; -----------------------------------------------------------------------
 WriteTempsReverse   PROC
 
@@ -292,19 +312,19 @@ WriteTempsReverse   PROC
     MOV     ESI, [EBP+8]
     MOV     ECX, TEMPS_PER_DAY
 
-    ; point ESI at last element
+    ; move ESI to last element
     MOV     EAX, TEMPS_PER_DAY
     DEC     EAX
     IMUL    EAX, EAX, 4
     ADD     ESI, EAX
 
-printLoop:
+revLoop:
     MOV     EAX, [ESI]
     PUSH    EAX
     CALL    WriteVal
     mDisplayChar    DELIMITER
-    SUB     ESI, 4
-    LOOP    printLoop
+    SUB     ESI, 4              ; step back one SDWORD
+    LOOP    revLoop
 
     POP     ESI
     POP     ECX
@@ -320,7 +340,7 @@ WriteTempsReverse   ENDP
 ; -----------------------------------------------------------------------
 main    PROC
 
-    ; intro
+    ; print intro and EC announcements
     mDisplayString  OFFSET intro
     CALL    CrLf
     mDisplayString  OFFSET ec1str
@@ -329,83 +349,82 @@ main    PROC
     CALL    CrLf
     CALL    CrLf
 
-    ; get filename
+    ; get the filename from the user
     mGetString  OFFSET prompt1, OFFSET fname, MAX_FNAME, OFFSET fnLen
     CALL    CrLf
 
-    ; open file
+    ; try to open the file
     MOV     EDX, OFFSET fname
     CALL    OpenInputFile
     CMP     EAX, INVALID_HANDLE_VALUE
-    JNE     opened
+    JNE     fileOk
     mDisplayString  OFFSET errMsg
     CALL    CrLf
-    JMP     done
+    JMP     quit
 
-opened:
-    MOV     EBX, EAX            ; save handle
+fileOk:
+    MOV     EBX, EAX            ; hang onto the file handle
 
-    ; read file
+    ; read contents into fileBuf
     MOV     EDX, OFFSET fileBuf
     MOV     ECX, MAX_BUF - 1
     CALL    ReadFromFile
-    MOV     fileBuf[EAX], 0     ; null terminate
+    MOV     fileBuf[EAX], 0     ; null terminate whatever we read
 
-    ; close
     MOV     EAX, EBX
     CALL    CloseFile
 
-    mDisplayString  OFFSET hdr
+    ; print the header
+    mDisplayString  OFFSET hdrMsg
     CALL    CrLf
 
-    ; loop through each line (EC1)
+    ; walk through each line of the file (EC1)
     MOV     ESI, OFFSET fileBuf
-    MOV     ECX, 0              ; line counter
+    MOV     ECX, 0              ; line number counter
 
-lineLoop:
+nextLine:
+    ; stop at null terminator
     CMP     BYTE PTR [ESI], 0
-    JE      finished
+    JE      allDone
 
-    ; skip stray CR/LF bytes
+    ; skip any stray CR or LF bytes
     CMP     BYTE PTR [ESI], CR
-    JE      skipByte
+    JE      skipOne
     CMP     BYTE PTR [ESI], LF
-    JE      skipByte
+    JE      skipOne
 
+    ; new line -- increment counter and print label
     INC     ECX
-
-    ; print line label
     PUSH    ECX
     mDisplayString  OFFSET lineHdr
     PUSH    ECX
-    CALL    WriteVal
+    CALL    WriteVal            ; print the line number
     MOV     AL, ':'
     CALL    WriteChar
     CALL    CrLf
     POP     ECX
 
-    ; parse the line
+    ; parse and reverse this line
     PUSH    ESI
     PUSH    OFFSET temps
     CALL    ParseTempsFromString
-    MOV     ESI, EAX            ; advance to next line
+    MOV     ESI, EAX            ; EAX has pointer to next line
 
-    ; print reversed
     PUSH    OFFSET temps
     CALL    WriteTempsReverse
     CALL    CrLf
 
-    JMP     lineLoop
+    JMP     nextLine
 
-skipByte:
+skipOne:
     INC     ESI
-    JMP     lineLoop
+    JMP     nextLine
 
-finished:
-    mDisplayString  OFFSET bye
+allDone:
+    mDisplayString  OFFSET goodbyeMsg
     CALL    CrLf
 
-done:
+quit:
     INVOKE  ExitProcess, 0
 
 main    ENDP
